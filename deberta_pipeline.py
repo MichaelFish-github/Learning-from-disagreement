@@ -105,7 +105,7 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f'Using device: {device}')
     df = pd.read_csv('./datasets/measuring-hate-speech/measuring-hate-speech-crowdtruth-vectors.csv')
-    num_epochs = 10
+    num_epochs = 75
 
     # Split the data into training and testing sets
     train_df, test_df = train_test_split(df, test_size=0.2, random_state=42)
