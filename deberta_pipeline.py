@@ -1,14 +1,15 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import pandas as pd
-from tqdm import tqdm
 from transformers import DebertaV2Tokenizer, DebertaV2Model
-from sklearn.model_selection import train_test_split
-import numpy as np
-from sklearn.metrics import f1_score, accuracy_score
 from matplotlib import pyplot as plt
-import scipy.stats
+from scipy.spatial.distance import jensenshannon
+from sklearn.metrics import f1_score, accuracy_score
+from sklearn.model_selection import train_test_split
+from tqdm import tqdm
+import pandas as pd
+import numpy as np
+
 import os
 
 
@@ -55,40 +56,46 @@ def get_embeddings_for_batch(texts, tokenizer, model, device='cpu'):
 
 
 def calculate_metrics(outputs, ground_truth, threshold=0.4):
+    # Apply softmax to get probabilities
     outputs = torch.exp(outputs)
 
+    # Move tensors to CPU and convert to numpy arrays
     ground_truth = ground_truth.cpu().numpy()
     outputs = outputs.cpu().detach().numpy()
 
+    # Calculate predicted and true class indices
     predicted_classes = np.argmax(outputs, axis=1)
     true_classes = np.argmax(ground_truth, axis=1)
 
+    # Calculate accuracy and macro F1 score
     accuracy = accuracy_score(true_classes, predicted_classes)
     f1 = f1_score(true_classes, predicted_classes, average='macro')
 
+    # Threshold the outputs and ground truth to create binary labels for each class
     predicted_thresholded = (outputs > threshold).astype(int)
     true_thresholded = (ground_truth > threshold).astype(int)
 
+    # Compute Class Threshold F1 score (CT F1) per class
     ct_f1_per_class = []
     for class_idx in range(ground_truth.shape[1]):
         ct_f1_class = f1_score(true_thresholded[:, class_idx], predicted_thresholded[:, class_idx])
         ct_f1_per_class.append(ct_f1_class)
 
+    # Compute average CT F1 across all classes
     ct_f1 = np.mean(ct_f1_per_class)
 
+    # Convert numpy arrays back to tensors for CE loss calculation
     outputs_tensor = torch.tensor(outputs).to(torch.device("cuda" if torch.cuda.is_available() else "cpu"))
     ground_truth_tensor = torch.tensor(ground_truth).to(outputs_tensor.device)
 
+    # Compute Cross-Entropy Loss (CE)
     ce_loss = F.cross_entropy(outputs_tensor, ground_truth_tensor.argmax(dim=1)).item()
 
-    def js_divergence(p, q):
-        p = p / np.sum(p, axis=1, keepdims=True)
-        q = q / np.sum(q, axis=1, keepdims=True)
-        m = 0.5 * (p + q)
-        jsd = 0.5 * (scipy.stats.entropy(p.T, m.T) + scipy.stats.entropy(q.T, m.T))
-        return np.mean(jsd)
-
-    jsd = js_divergence(outputs, ground_truth)
+    # Compute Jensen-Shannon Divergence (JSD) using scipy's jensenshannon function
+    jsd_per_sample = [
+        jensenshannon(outputs[i], ground_truth[i]) ** 2 for i in range(outputs.shape[0])
+    ]
+    jsd = np.mean(jsd_per_sample)
 
     return accuracy, f1, ct_f1, ce_loss, jsd
 
@@ -130,10 +137,24 @@ def main():
 
     results_path = f'./results/{dataset_name}/{baseline_name}'
     df = pd.read_csv('./datasets/measuring-hate-speech/measuring-hate-speech-crowdtruth-vectors.csv')
+
+    # New flag: Set to True if you want to split one dataframe into train and test.
+    use_split_data = True
+
+    if use_split_data:
+        # Split the single dataframe into train and test
+        train_df, test_df = train_test_split(df, test_size=0.2, random_state=42)
+    else:
+        # Load separate dataframes for train and test
+        train_df = pd.read_csv('./datasets/measuring-hate-speech/train.csv')
+        test_df = pd.read_csv('./datasets/measuring-hate-speech/test.csv')
+
     num_epochs = 75
     batch_size = 128
 
-    train_df, test_df = train_test_split(df, test_size=0.2, random_state=42)
+    # Filter out rows with all zeros in the label column
+    train_df = train_df[train_df['label'] != '[0.0, 0.0, 0.0]']
+    test_df = test_df[test_df['label'] != '[0.0, 0.0, 0.0]']
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f'Using device: {device}')
