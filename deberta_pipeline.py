@@ -9,6 +9,7 @@ import numpy as np
 from sklearn.metrics import f1_score, accuracy_score
 from matplotlib import pyplot as plt
 import scipy.stats
+import os
 
 
 # Define the distribution prediction model
@@ -101,15 +102,19 @@ def list_of_strings_to_tensor(lst, device='cpu'):
 
 
 def main():
-    # Set device to GPU if available
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f'Using device: {device}')
+    dataset_name = 'measuring-hate-speech'
+    baseline_name = 'crowdtruth'
+
+    results_path = f'./results/{dataset_name}/{baseline_name}'
     df = pd.read_csv('./datasets/measuring-hate-speech/measuring-hate-speech-crowdtruth-vectors.csv')
     num_epochs = 75
 
     # Split the data into training and testing sets
     train_df, test_df = train_test_split(df, test_size=0.2, random_state=42)
 
+    # Set device to GPU if available
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f'Using device: {device}')
     # Get embeddings for train and test sets
     print("Embedding test data...")
     test_embeddings = get_embeddings_in_batches(test_df['text'].tolist(), batch_size=32, device=device)
@@ -188,10 +193,13 @@ def main():
     plt.tight_layout()
     plt.show()
 
+    # Create the directory if it doesn't exist
+    os.makedirs(results_path, exist_ok=True)
+
     # Save the model
-    torch.save(predictor.state_dict(), 'deberta_distribution_predictor.pth')
+    torch.save(predictor.state_dict(), os.path.join(results_path, 'deberta_model.pth'))
     # Save the plot
-    fig.savefig('deberta_metrics_plot.png')
+    fig.savefig(os.path.join(results_path, 'metrics.png'))
 
 
 if __name__ == '__main__':
